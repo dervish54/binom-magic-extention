@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+
+.vscode/
+
+_bak/
+extension_bak/
+extension_bak_*/
+example-binom-report/
+
+*.bak
+*.bak_*
+
+Thumbs.db
+.DS_Store
+docs/

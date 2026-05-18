@@ -1,0 +1,182 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Binom Magic Extension Options</title>
+  <style>
+    :root {
+      --bg: #f6f4ef;
+      --card: #fffdf8;
+      --ink: #1d1d1b;
+      --muted: #6a665d;
+      --line: #d9d1bf;
+      --accent: #1f6b5b;
+      --danger: #ad2d2d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 28px;
+      font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, #efe7d2 0, transparent 32%),
+        linear-gradient(180deg, #fbfaf6 0%, var(--bg) 100%);
+    }
+    h1, h2 { margin: 0 0 14px; }
+    p { margin: 0; color: var(--muted); }
+    .page { max-width: 1280px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 10px 28px rgba(40, 32, 15, 0.06);
+      margin-bottom: 18px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(280px, 1fr));
+      gap: 14px 18px;
+    }
+    .field label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    .field input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+    .field small {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+    }
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .source-list {
+      display: grid;
+      gap: 14px;
+    }
+    .source-row {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px;
+      background: #fff;
+    }
+    .source-row__head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .source-row__title {
+      font-weight: 700;
+    }
+    .source-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .secret-wrap {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .secret-wrap input { flex: 1; }
+    button {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      border-radius: 10px;
+      padding: 9px 14px;
+      cursor: pointer;
+    }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    button.danger {
+      color: var(--danger);
+      border-color: #e4b9b9;
+      background: #fff8f8;
+    }
+    .status {
+      min-height: 20px;
+      font-weight: 600;
+    }
+    .status.ok { color: var(--accent); }
+    .status.err { color: var(--danger); }
+    @media (max-width: 1120px) {
+      .source-grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
+    }
+    @media (max-width: 760px) {
+      body { padding: 16px; }
+      .grid, .source-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+  <script defer src="secure-storage.js"></script>
+  <script defer src="options.js"></script>
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+      <h1>Binom Magic Extension Options</h1>
+      <p>Tracker settings are global. Traffic source credentials are stored per source row. Secrets are masked in UI and stored encrypted in extension storage.</p>
+    </div>
+
+    <section class="card">
+      <h2>Tracker</h2>
+      <div class="grid">
+        <div class="field">
+          <label for="tracker-base-url">Tracker Address</label>
+          <input id="tracker-base-url" type="text" placeholder="http://164.90.134.144" />
+        </div>
+        <div class="field">
+          <label for="tracker-api-token">Tracker API Token</label>
+          <div class="secret-wrap">
+            <input id="tracker-api-token" type="password" placeholder="Binom Api-Key" autocomplete="off" />
+            <button type="button" data-toggle-secret="#tracker-api-token">Show</button>
+          </div>
+          <small>Used for Binom object/report API calls.</small>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="toolbar">
+        <div>
+          <h2>Traffic Sources</h2>
+          <p>One row per source from the tracker.</p>
+        </div>
+        <button id="add-source" type="button">Add Source</button>
+      </div>
+      <div id="source-list" class="source-list"></div>
+    </section>
+
+    <section class="card">
+      <div class="toolbar">
+        <button id="save" type="button" class="primary">Save</button>
+        <span id="status" class="status"></span>
+      </div>
+      <div class="toolbar">
+        <button id="reset" type="button" class="danger">Reset Stored Data</button>
+        <span id="reset-status" class="status"></span>
+      </div>
+      <p>Settings and campaign id mappings are mirrored to local and sync storage for reuse after updates and best-effort reuse after reinstall on the same Chrome profile.</p>
+    </section>
+  </div>
+</body>
+</html>

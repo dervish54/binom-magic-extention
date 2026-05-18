@@ -1,0 +1,41 @@
+﻿{
+  "manifest_version": 3,
+  "name": "Binom Magic",
+  "version": "0.2.0",
+  "description": "On-demand Adskeeper hover overlay for Binom v2 reports. Hold Ctrl to show metrics; double-tap Ctrl to pin; prefetch and copy IDs when needed.",
+  "permissions": [
+    "storage",
+    "scripting",
+    "contextMenus",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Binom Magic: Prefetch Hover Metrics"
+  },
+  "commands": {
+    "binom_magic_copy_ids": {
+      "suggested_key": { "default": "Alt+Shift+C" },
+      "description": "Copy Binom IDs JSON"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file://*/*"
+      ],
+      "js": ["content/binom-demo.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}
