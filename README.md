@@ -2,7 +2,10 @@
 
 Russian version: [README.ru.md](C:/Users/Mikhail/binom-magic-extention/README.ru.md)
 
-Chrome MV3 extension for Binom report pages. It shows source-side metrics in a hover overlay without changing the report table.
+Chrome extension for Binom report pages. It shows source-side metrics in a hover overlay without changing the report table.
+
+![Binom Magic screenshot](https://i.ibb.co/tPncW64M/image.png)
+
 
 ## What It Does
 
@@ -44,4 +47,4 @@ The extension is built for a Binom + AdsKeeper workflow:
 
 - The extension is intended for private/internal usage.
 - It uses direct API credentials, so treat tracker and source tokens as sensitive.
-- For shared or production usage, a backend/proxy layer is safer than storing powerful tokens in the browser.
+- For shared or production usage, a backend/proxy layer is safer than storing powerful tokens in the browser. Text me if you need this.

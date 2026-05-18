@@ -324,6 +324,110 @@ async function resolveScopedWidgetCampaignMappings(widgetId, trackerCampaignIds,
   return resolved;
 }
 
+function dedupeWidgetCampaignMappings(mappings) {
+  const result = [];
+  const seen = new Set();
+  for (const mapping of Array.isArray(mappings) ? mappings : []) {
+    const trackerCampaignId = String(mapping?.trackerCampaignId || '').trim();
+    const sourceCampaignId = String(mapping?.sourceCampaignId || '').trim();
+    const trafficSourceId = String(mapping?.trafficSourceId || '').trim();
+    if (!sourceCampaignId) continue;
+    const key = `${trackerCampaignId}|${sourceCampaignId}|${trafficSourceId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ trackerCampaignId, sourceCampaignId, trafficSourceId });
+  }
+  return result;
+}
+
+async function collectWidgetCampaignBreakdown(widgetId, trackerCampaignIds, scope = {}, fallback = {}) {
+  const entityId = String(widgetId || '').trim();
+  const scopedTrackerCampaignIds = uniqueStrings(trackerCampaignIds || []);
+  if (!entityId) return { mappings: [], parts: [], errors: [] };
+
+  let mappings = [];
+  if (scopedTrackerCampaignIds.length) {
+    mappings = await resolveScopedWidgetCampaignMappings(entityId, scopedTrackerCampaignIds, scope);
+  } else {
+    const fallbackTrackerCampaignId = String(fallback?.trackerCampaignId || '').trim();
+    const fallbackSourceCampaignId = String(fallback?.sourceCampaignId || '').trim();
+    const fallbackTrafficSourceId = String(fallback?.trafficSourceId || '').trim();
+    if (fallbackTrackerCampaignId && !fallbackSourceCampaignId) {
+      const resolved = await resolveTrackerCampaignMapping(fallbackTrackerCampaignId, scope).catch(() => null);
+      if (resolved?.sourceCampaignId) {
+        mappings = [resolved];
+      }
+    } else if (fallbackTrackerCampaignId || fallbackSourceCampaignId) {
+      mappings = [{
+        trackerCampaignId: fallbackTrackerCampaignId,
+        sourceCampaignId: fallbackSourceCampaignId,
+        trafficSourceId: fallbackTrafficSourceId
+      }];
+    }
+  }
+
+  const dedupedMappings = dedupeWidgetCampaignMappings(mappings);
+  const parts = [];
+  const errors = [];
+
+  for (const mapping of dedupedMappings) {
+    try {
+      const creds = await loadSourceCredentials({
+        trafficSourceId: mapping.trafficSourceId,
+        trackerCampaignId: mapping.trackerCampaignId,
+        sourceCampaignId: mapping.sourceCampaignId
+      });
+      const token = creds?.token;
+      const idAuth = creds?.idAuth;
+      const apiBase = creds?.apiBase || 'https://api.adskeeper.co.uk/v1';
+      if (!token || !idAuth) {
+        throw new Error(`Missing Adskeeper credentials for source campaign ${mapping.sourceCampaignId}`);
+      }
+      const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
+      const campaignDetails = await fetchCampaignDetails(apiBase, idAuth, headers, mapping.sourceCampaignId).catch(() => null);
+      const widgetAcl = extractCampaignWidgetAcl(campaignDetails);
+      const metrics = await fetchWidgetsQualityStats(
+        apiBase,
+        mapping.sourceCampaignId,
+        headers,
+        [entityId],
+        scope.startDate,
+        scope.endDate,
+        widgetAcl,
+        scope.timeZone || '',
+        scope.dateType || '',
+        { stream: false }
+      );
+      const entry = metrics?.[entityId] || {};
+      const widgetStatus = entry.status ?? deriveWidgetStatusFromAcl(widgetAcl, entityId) ?? null;
+      parts.push({
+        trackerCampaignId: String(mapping.trackerCampaignId || '').trim(),
+        sourceCampaignId: String(mapping.sourceCampaignId || '').trim(),
+        trafficSourceId: String(mapping.trafficSourceId || '').trim(),
+        impressions: entry.impressions ?? null,
+        clicks: entry.clicks ?? null,
+        spend: entry.spend ?? null,
+        cpc: entry.cpc ?? null,
+        bid: entry.bid ?? null,
+        status: widgetStatus
+      });
+    } catch (error) {
+      errors.push({
+        trackerCampaignId: String(mapping.trackerCampaignId || '').trim(),
+        sourceCampaignId: String(mapping.sourceCampaignId || '').trim(),
+        trafficSourceId: String(mapping.trafficSourceId || '').trim(),
+        message: String(error?.message || error)
+      });
+    }
+  }
+
+  return {
+    mappings: dedupedMappings,
+    parts,
+    errors
+  };
+}
+
 async function resolveScopedSourceCampaignMapping(sourceCampaignId, trackerCampaignIds, scope = {}) {
   const sourceId = String(sourceCampaignId || '').trim();
   const scopedTrackerCampaignIds = uniqueStrings(trackerCampaignIds);
@@ -602,12 +706,96 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           ctx
         });
         const tracker = await loadTrackerCredentials();
-        const trackerCampaignId = String(ctx.trackerCampaignId || '').trim();
-        const cost = Number(msg.spend);
         if (!tracker.baseUrl || !tracker.apiToken) {
           sendResponse?.({ ok: false, statusCode: 'local', error: 'Missing tracker credentials in Options' });
           return;
         }
+        const headers = {
+          'Api-Key': tracker.apiToken,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        };
+        if (ctx.entity === 'widget') {
+          const widgetBreakdown = await collectWidgetCampaignBreakdown(
+            ctx.entityId,
+            ctx.trackerCampaignIds,
+            ctx.scope,
+            ctx
+          );
+          if (!widgetBreakdown.mappings.length) {
+            sendResponse?.({ ok: false, statusCode: 'local', error: 'Widget campaign scope unresolved for cost update' });
+            return;
+          }
+          if (widgetBreakdown.errors.length) {
+            sendResponse?.({
+              ok: false,
+              statusCode: 'local',
+              error: widgetBreakdown.errors.map((item) => item.message).join('; ')
+            });
+            return;
+          }
+          if (!widgetBreakdown.parts.length) {
+            sendResponse?.({ ok: false, statusCode: 'local', error: 'Widget spend is unavailable for all matched campaigns' });
+            return;
+          }
+          const invalidPart = widgetBreakdown.parts.find((part) => {
+            const partTrackerCampaignId = String(part?.trackerCampaignId || '').trim();
+            const partSpend = Number(part?.spend);
+            return !partTrackerCampaignId || !Number.isFinite(partSpend);
+          });
+          if (invalidPart) {
+            sendResponse?.({
+              ok: false,
+              statusCode: 'local',
+              error: `Widget spend is unavailable or campaign unresolved for tracker campaign ${String(invalidPart?.trackerCampaignId || '?')}`
+            });
+            return;
+          }
+
+          const updates = [];
+          // Widget cost is tracker-campaign scoped in Binom, so multi-campaign widgets
+          // must be written back as a series of token_1 updates, one per tracker campaign.
+          for (const part of widgetBreakdown.parts) {
+            const partTrackerCampaignId = String(part.trackerCampaignId || '').trim();
+            const partCost = Number(part.spend);
+            const payload = buildTrackerCostPayload({ ...msg, entity: ctx.entity }, partCost, ctx.entityId);
+            const url = `${tracker.baseUrl}/public/api/v1/clicks/campaign/${encodeURIComponent(partTrackerCampaignId)}`;
+            const result = await httpJsonMutation(
+              'tracker-update-cost',
+              url,
+              { method: 'PUT', headers, json: payload },
+              `${ctx.entityId || ''}:${partTrackerCampaignId}`
+            );
+            updates.push({
+              trackerCampaignId: partTrackerCampaignId,
+              sourceCampaignId: String(part.sourceCampaignId || '').trim(),
+              trafficSourceId: String(part.trafficSourceId || '').trim(),
+              spentUsed: partCost,
+              statusCode: result.status
+            });
+          }
+          log('ACTION update-cost success', {
+            actionTraceId: msg.actionTraceId || null,
+            trackerCampaignIdsUsed: updates.map((item) => item.trackerCampaignId),
+            sourceCampaignIdsUsed: updates.map((item) => item.sourceCampaignId),
+            updateCount: updates.length
+          });
+          sendResponse?.({
+            ok: true,
+            action: 'update_cost',
+            actionTraceId: msg.actionTraceId || null,
+            entity: ctx.entity,
+            statusCode: updates[updates.length - 1]?.statusCode || 200,
+            spentUsed: updates.reduce((sum, item) => sum + Number(item.spentUsed || 0), 0),
+            trackerCampaignIdsUsed: uniqueStrings(updates.map((item) => item.trackerCampaignId)),
+            sourceCampaignIdsUsed: uniqueStrings(updates.map((item) => item.sourceCampaignId)),
+            campaignUpdates: updates
+          });
+          return;
+        }
+
+        const trackerCampaignId = String(ctx.trackerCampaignId || '').trim();
+        const cost = Number(msg.spend);
         if (!trackerCampaignId) {
           sendResponse?.({ ok: false, statusCode: 'local', error: 'Tracker campaign ID unresolved for cost update' });
           return;
@@ -616,11 +804,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse?.({ ok: false, statusCode: 'local', error: 'Current spend is unavailable for this entity' });
           return;
         }
-        const headers = {
-          'Api-Key': tracker.apiToken,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        };
         const payload = buildTrackerCostPayload({ ...msg, entity: ctx.entity }, cost, ctx.entityId);
         const url = `${tracker.baseUrl}/public/api/v1/clicks/campaign/${encodeURIComponent(trackerCampaignId)}`;
         const result = await httpJsonMutation('tracker-update-cost', url, { method: 'PUT', headers, json: payload }, ctx.entityId || trackerCampaignId);
@@ -831,44 +1014,28 @@ if (msg && msg.type === 'AK_FETCH_ENTITY') {
       let data = null;
       let responseMetaExtra = {};
       if (entity === 'widget') {
-        const widgetMappings = trackerCampaignIds.length
-          ? await resolveScopedWidgetCampaignMappings(entityId, trackerCampaignIds, scope)
-          : [];
-        const mappingList = widgetMappings.length
-          ? widgetMappings
-          : [{ trackerCampaignId, trafficSourceId: resolvedTrafficSourceId, sourceCampaignId: campaignId }];
-        const widgetParts = [];
-        const widgetTrackerCampaignIdsUsed = [];
-        const widgetSourceCampaignIdsUsed = [];
-        for (const mapping of mappingList) {
-          if (!mapping?.sourceCampaignId) continue;
-          widgetTrackerCampaignIdsUsed.push(String(mapping.trackerCampaignId || ''));
-          widgetSourceCampaignIdsUsed.push(String(mapping.sourceCampaignId || ''));
-          const creds = await loadSourceCredentials({ trafficSourceId: mapping.trafficSourceId, trackerCampaignId: mapping.trackerCampaignId, sourceCampaignId: mapping.sourceCampaignId });
-          const token = creds?.token;
-          const idAuth = creds?.idAuth;
-          const apiBase = creds?.apiBase || 'https://api.adskeeper.co.uk/v1';
-          if (!token || !idAuth) continue;
-          const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
-          const campaignDetails = await fetchCampaignDetails(apiBase, idAuth, headers, mapping.sourceCampaignId).catch(() => null);
-          const widgetAcl = extractCampaignWidgetAcl(campaignDetails);
-          const metrics = await fetchWidgetsQualityStats(apiBase, mapping.sourceCampaignId, headers, [entityId], startDate, endDate, widgetAcl, timeZone, dateType, { stream: false });
-          const entry = metrics?.[entityId] || {};
-          const widgetStatus = entry.status ?? deriveWidgetStatusFromAcl(widgetAcl, entityId) ?? null;
-          widgetParts.push({
-            impressions: entry.impressions ?? null,
-            clicks: entry.clicks ?? null,
-            spend: entry.spend ?? null,
-            cpc: entry.cpc ?? null,
-            bid: entry.bid ?? null,
-            status: widgetStatus
-          });
-        }
+        const widgetBreakdown = await collectWidgetCampaignBreakdown(
+          entityId,
+          trackerCampaignIds,
+          scope,
+          {
+            trackerCampaignId,
+            sourceCampaignId: campaignId,
+            trafficSourceId: resolvedTrafficSourceId
+          }
+        );
+        const widgetParts = widgetBreakdown.parts;
         data = aggregateMetrics(widgetParts);
+        if (data) {
+          data.campaignBreakdown = widgetParts.map((part) => ({ ...part }));
+        }
         responseMetaExtra = {
-          trackerCampaignIdsUsed: uniqueStrings(widgetTrackerCampaignIdsUsed),
-          sourceCampaignIdsUsed: uniqueStrings(widgetSourceCampaignIdsUsed)
+          trackerCampaignIdsUsed: uniqueStrings(widgetParts.map((part) => part.trackerCampaignId)),
+          sourceCampaignIdsUsed: uniqueStrings(widgetParts.map((part) => part.sourceCampaignId))
         };
+        if (widgetBreakdown.errors.length) {
+          responseMetaExtra.widgetBreakdownErrors = widgetBreakdown.errors;
+        }
       } else if (entity === 'campaign') {
         const creds = await loadSourceCredentials({ ...msg, trafficSourceId: resolvedTrafficSourceId, sourceCampaignId: campaignId, campaignId });
         const token = creds?.token;
