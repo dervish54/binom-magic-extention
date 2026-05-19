@@ -1,6 +1,6 @@
 # Binom Magic
 
-English version: [README.md](C:/Users/Mikhail/binom-magic-extention/README.md)
+English version: [README.md](https://github.com/dervish54/binom-magic-extention/blob/main/README.md)
 
 Chrome расширение для страниц отчетов Binom. Показывает метрики источника в hover-overlay без изменения таблицы отчета.
 
