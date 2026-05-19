@@ -1,6 +1,6 @@
 # Binom Magic
 
-Russian version: [README.ru.md](C:/Users/Mikhail/binom-magic-extention/README.ru.md)
+Russian version: [README.ru.md](https://github.com/dervish54/binom-magic-extention/blob/main/README.ru.md)
 
 Chrome extension for Binom report pages. It shows source-side metrics in a hover overlay without changing the report table.
 
